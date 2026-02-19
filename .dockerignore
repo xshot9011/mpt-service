@@ -1,0 +1,9 @@
+target
+**/*.rs.bk
+.env
+.git
+.gitignore
+Dockerfile
+docker-compose.yml
+README.md
+task.md
