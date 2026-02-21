@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:18.2-alpine3.23
+    container_name: mpt_postgres
+    environment:
+      POSTGRES_DB: mpt_service_db
+      POSTGRES_USER: mpt_service_user
+      POSTGRES_PASSWORD: mpt_service_password
+      PGDATA: /var/lib/postgresql
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
