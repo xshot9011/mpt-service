@@ -6,7 +6,7 @@ description: Prepare PR - generate branch name and PR description from current g
 
 When the user asks to "prepare PR", follow these steps:
 
-1. Run `git status` and `git diff` (or `git diff main..HEAD` if on a branch) to understand all changes.
+1. Run `git diff --name-status $(git merge-base main HEAD)..HEAD` to get a concise list of changed files and their change types.
 2. Analyze the changes to determine:
    - The type prefix: `feat`, `fix`, `chore`, `refactor`, `docs`, `test`, `ci`, `perf`, `style`, or `build`
    - A short detail slug for the branch name

@@ -6,7 +6,7 @@ description: Prepare Commit - generate a commit message based on staged changes
 
 When the user asks to "prepare commit", follow these steps:
 
-1. Run `git status` and `git diff --cached` to see ONLY the currently staged files. If there are no staged files, advise the user that they must manually `git add` the files they wish to include first.
+1. Run `git diff --cached --name-status` to get a concise list of staged files and their change types. If there are no staged files, advise the user to `git add` the files they wish to include first.
 2. Analyze only the staged changes to determine the conventional commit type (`feat`, `fix`, `chore`, `refactor`, `docs`, `test`, `ci`, `perf`, `style`, or `build`) and a short description.
 3. Output EXACTLY **1 copyable codeblock** containing the commit command.
 
