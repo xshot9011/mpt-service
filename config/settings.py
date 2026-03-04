@@ -52,7 +52,7 @@ INSTALLED_APPS = [
     # Local apps
     'users',
     'portfolio',
-    'symbol',
+    'nav_manager',
 
     # allauths apps
     'allauth',
