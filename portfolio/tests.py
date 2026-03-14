@@ -4,7 +4,7 @@ from django.utils import timezone
 from datetime import timedelta
 
 from nav_manager.models import Asset as NavAsset, DailyPrice
-from .models import Portfolio, AssetType, Symbol, Position, Transaction, LedgerEntry
+from .models import Portfolio, AssetType, Symbol, Position, Transaction, LedgerEntry, ExchangeRate
 
 
 # ---------------------------------------------------------------------------
@@ -240,3 +240,117 @@ class PortfolioValueAtTests(TestCase):
         )
         # 100 units * 10.00 fixed NAV = 1000.00
         self.assertEqual(portfolio2.value_at(today), Decimal('1000.00000000'))
+
+
+# ---------------------------------------------------------------------------
+# ExchangeRate Tests
+# ---------------------------------------------------------------------------
+
+class ExchangeRateTests(TestCase):
+    def test_same_currency_returns_one(self):
+        """get_rate for same from/to currency should return Decimal('1')."""
+        rate = ExchangeRate.get_rate('THB', 'THB')
+        self.assertEqual(rate, Decimal('1'))
+
+    def test_returns_exact_date_rate(self):
+        today = timezone.now().date()
+        ExchangeRate.objects.create(
+            from_currency='USD', to_currency='THB', date=today, rate=Decimal('35.50')
+        )
+        rate = ExchangeRate.get_rate('USD', 'THB', today)
+        self.assertEqual(rate, Decimal('35.50'))
+
+    def test_returns_latest_rate_before_date(self):
+        today = timezone.now().date()
+        yesterday = today - timedelta(days=1)
+        three_days_ago = today - timedelta(days=3)
+        ExchangeRate.objects.create(
+            from_currency='USD', to_currency='THB', date=three_days_ago, rate=Decimal('34.00')
+        )
+        ExchangeRate.objects.create(
+            from_currency='USD', to_currency='THB', date=yesterday, rate=Decimal('35.00')
+        )
+        # Should pick yesterday's rate (latest <= today)
+        rate = ExchangeRate.get_rate('USD', 'THB', today)
+        self.assertEqual(rate, Decimal('35.00'))
+
+    def test_returns_none_when_no_rate_exists(self):
+        rate = ExchangeRate.get_rate('USD', 'THB', timezone.now().date())
+        self.assertIsNone(rate)
+
+
+# ---------------------------------------------------------------------------
+# FX-Aware Average Cost Tests
+# ---------------------------------------------------------------------------
+
+class FXAverageCostTests(TestCase):
+    """Test that average cost is computed in portfolio base currency."""
+
+    def setUp(self):
+        self.portfolio = Portfolio.objects.create(name="Thai Portfolio", currency='THB')
+        asset_type = AssetType.objects.create(portfolio=self.portfolio, name="US Equity")
+        self.symbol = Symbol.objects.create(
+            asset_type=asset_type,
+            name="SCHD",
+            currency='USD',
+            nav_source=Symbol.NavSource.FIXED,
+            nav_fixed=Decimal('25.00'),
+        )
+        self.position = Position.objects.create(
+            portfolio=self.portfolio, symbol=self.symbol,
+        )
+
+    def test_single_buy_with_exchange_rate(self):
+        """BUY 10 SCHD @ $10 USD, FX rate 35.50 → avg cost = 355.00 THB."""
+        Transaction.objects.create(
+            position=self.position,
+            transaction_type=Transaction.Type.BUY,
+            quantity=Decimal('10'),
+            price=Decimal('10.00'),
+            exchange_rate=Decimal('35.50'),
+        )
+        self.position.refresh_from_db()
+        self.assertEqual(self.position.quantity, Decimal('10'))
+        # avg cost = 10 * 10 * 35.5 / 10 = 355.00
+        self.assertEqual(self.position.average_cost, Decimal('355.00000000'))
+
+    def test_multiple_buys_with_different_fx_rates(self):
+        """Two buys at different FX rates → weighted average in THB."""
+        Transaction.objects.create(
+            position=self.position,
+            transaction_type=Transaction.Type.BUY,
+            quantity=Decimal('10'),
+            price=Decimal('10.00'),
+            exchange_rate=Decimal('35.00'),  # cost = 3500 THB
+        )
+        Transaction.objects.create(
+            position=self.position,
+            transaction_type=Transaction.Type.BUY,
+            quantity=Decimal('5'),
+            price=Decimal('12.00'),
+            exchange_rate=Decimal('36.00'),  # cost = 2160 THB
+        )
+        self.position.refresh_from_db()
+        self.assertEqual(self.position.quantity, Decimal('15'))
+        # avg cost = (3500 + 2160) / 15 = 377.33333333
+        self.assertEqual(self.position.average_cost, Decimal('377.33333333'))
+
+    def test_same_currency_exchange_rate_defaults_to_one(self):
+        """When exchange_rate is not specified, defaults to 1 (same currency)."""
+        thb_portfolio = Portfolio.objects.create(name="THB Only", currency='THB')
+        asset_type = AssetType.objects.create(portfolio=thb_portfolio, name="Cash")
+        thb_symbol = Symbol.objects.create(
+            asset_type=asset_type, name="SCB Cash", currency='THB',
+            nav_source=Symbol.NavSource.FIXED, nav_fixed=Decimal('1'),
+        )
+        position = Position.objects.create(portfolio=thb_portfolio, symbol=thb_symbol)
+        Transaction.objects.create(
+            position=position,
+            transaction_type=Transaction.Type.BUY,
+            quantity=Decimal('100'),
+            price=Decimal('5.00'),
+            # exchange_rate defaults to 1.0
+        )
+        position.refresh_from_db()
+        # avg cost = 100 * 5 * 1 / 100 = 5.00
+        self.assertEqual(position.average_cost, Decimal('5.00000000'))

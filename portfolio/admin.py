@@ -1,6 +1,6 @@
 from django.contrib import admin
 # Imforms Django admin to use these models in the admin interface
-from .models import Portfolio, AssetType, Symbol, Position, Transaction, LedgerEntry
+from .models import Portfolio, AssetType, Symbol, Position, Transaction, LedgerEntry, ExchangeRate
 
 
 # Allows editing Symbol objects directly within the AssetType edit page in the admin interface.
@@ -24,7 +24,7 @@ class AssetTypeInline(admin.TabularInline):
 @admin.register(Portfolio)
 class PortfolioAdmin(admin.ModelAdmin):
     # Fields to display as columns in the Portfolio list view
-    list_display = ('name',)
+    list_display = ('name', 'currency')
     # Includes the AssetTypeInline so you can add/edit AssetTypes when viewing a Portfolio
     inlines = [AssetTypeInline]
 
@@ -44,12 +44,19 @@ class AssetTypeAdmin(admin.ModelAdmin):
 @admin.register(Symbol)
 class SymbolAdmin(admin.ModelAdmin):
     # Columns to show in the list view, providing a quick overview of NAV settings
-    list_display = ('name', 'asset_type', 'nav_source', 'nav_fixed', 'nav_asset')
+    list_display = ('name', 'asset_type', 'currency', 'nav_source', 'nav_fixed', 'nav_asset')
     # Adds sidebar filters to filter Symbols by their NAV source or the Portfolio they belong to
-    list_filter = ('nav_source', 'asset_type__portfolio')
+    list_filter = ('nav_source', 'currency', 'asset_type__portfolio')
 
 
 # Default registration for these models without any custom admin class (uses default basic views)
 admin.site.register(Position)
 admin.site.register(Transaction)
 admin.site.register(LedgerEntry)
+
+
+@admin.register(ExchangeRate)
+class ExchangeRateAdmin(admin.ModelAdmin):
+    list_display = ('from_currency', 'to_currency', 'date', 'rate')
+    list_filter = ('from_currency', 'to_currency')
+    ordering = ('-date',)

@@ -8,6 +8,11 @@ class Portfolio(models.Model):
     """A collection of positions organised by asset types and symbols."""
     name = models.CharField(max_length=100)
     description = models.TextField(blank=True)
+    currency = models.CharField(
+        max_length=3,
+        default='THB',
+        help_text="Base currency for the portfolio (ISO 4217, e.g. THB, USD).",
+    )
 
     def __str__(self):
         return self.name
@@ -63,6 +68,11 @@ class Symbol(models.Model):
 
     asset_type = models.ForeignKey(AssetType, on_delete=models.CASCADE, related_name='symbols')
     name = models.CharField(max_length=100)
+    currency = models.CharField(
+        max_length=3,
+        default='THB',
+        help_text="Currency this symbol is denominated in (ISO 4217, e.g. USD, THB).",
+    )
 
     nav_source = models.CharField(
         max_length=20,
@@ -125,6 +135,47 @@ class Symbol(models.Model):
         return None
 
 
+class ExchangeRate(models.Model):
+    """Manual exchange rate record.
+
+    Stores a daily FX rate from one currency to another.
+    Example: from_currency='USD', to_currency='THB', rate=35.50
+    means 1 USD = 35.50 THB on that date.
+    """
+    from_currency = models.CharField(max_length=3, help_text="Source currency (ISO 4217).")
+    to_currency = models.CharField(max_length=3, help_text="Target currency (ISO 4217).")
+    date = models.DateField()
+    rate = models.DecimalField(max_digits=30, decimal_places=8)
+
+    class Meta:
+        unique_together = ('from_currency', 'to_currency', 'date')
+        ordering = ['-date']
+
+    def __str__(self):
+        return f"{self.from_currency}/{self.to_currency} {self.date}: {self.rate}"
+
+    @classmethod
+    def get_rate(cls, from_currency, to_currency, target_date=None):
+        """Look up the latest exchange rate on or before target_date.
+
+        Returns Decimal('1') if from_currency == to_currency.
+        Returns None if no rate is found.
+        """
+        if from_currency == to_currency:
+            return Decimal('1')
+
+        if target_date is None:
+            target_date = timezone.now().date()
+
+        entry = cls.objects.filter(
+            from_currency=from_currency,
+            to_currency=to_currency,
+            date__lte=target_date,
+        ).order_by('-date').first()
+
+        return entry.rate if entry else None
+
+
 class Position(models.Model):
     """Current holding of a symbol within a portfolio.
 
@@ -145,13 +196,15 @@ class Position(models.Model):
         """Re-calculate the moving-average cost based on all related BUY transactions.
 
         Only BUY transactions affect the average cost; SELLs reduce quantity.
+        Cost is converted to the portfolio's base currency using each
+        transaction's exchange_rate.
         """
         buys = self.transactions.filter(transaction_type=Transaction.Type.BUY)
         total_qty = Decimal('0')
         total_cost = Decimal('0')
         for tx in buys:
             total_qty += tx.quantity
-            total_cost += tx.quantity * tx.price
+            total_cost += tx.quantity * tx.price * tx.exchange_rate
         if total_qty > 0:
             self.average_cost = (total_cost / total_qty).quantize(Decimal('0.00000001'))
         else:
@@ -173,6 +226,10 @@ class Transaction(models.Model):
     transaction_type = models.CharField(max_length=4, choices=Type.choices)
     quantity = models.DecimalField(max_digits=30, decimal_places=8)
     price = models.DecimalField(max_digits=30, decimal_places=8)  # price per unit
+    exchange_rate = models.DecimalField(
+        max_digits=30, decimal_places=8, default=Decimal('1'),
+        help_text="FX rate from symbol currency to portfolio base currency at time of trade.",
+    )
     timestamp = models.DateTimeField(default=timezone.now)
 
     def __str__(self):

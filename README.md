@@ -45,3 +45,44 @@ To spin up the full environment, run:
 docker-compose up --build
 ```
 The application will be accessible at `http://127.0.0.1:8000/`.
+
+---
+
+## Running Tests
+
+Django uses its built-in test framework along with the `manage.py test` command to discover and run tests.
+
+### How it works:
+1. **Test Discovery**: Django finds all files named `tests.py` or starting with `test_` inside your apps, and runs all methods starting with `test_` within `TestCase` classes.
+2. **Test Database**: It creates a brand new, empty database just for testing, applies all migrations, and destroys it when the tests finish. This ensures tests are isolated and don't affect your real data.
+3. **Isolation**: Every test runs inside a database transaction that is rolled back at the end of the test. Any data created in a test (or its `setUp` method) is erased before the next test runs.
+
+### Command Examples:
+
+**Run all tests in the project:**
+```bash
+python3 manage.py test
+```
+
+**Run all tests for a specific app (e.g., `portfolio`):**
+```bash
+python3 manage.py test portfolio
+```
+
+**Run tests in a specific class:**
+```bash
+python3 manage.py test portfolio.tests.SymbolNavTests
+```
+
+**Run a single specific test:**
+```bash
+python3 manage.py test portfolio.tests.SymbolNavTests.test_nav_fixed_returns_fixed_value
+```
+
+### Running Tests in Docker
+If you are developing using Docker (e.g., Option 1), you should run the test command inside the running container. 
+
+Assuming your app service is named `web` (default in the `docker-compose.dev.yml`), run:
+```bash
+docker-compose -f docker-compose.dev.yml exec web python3 manage.py test
+```
