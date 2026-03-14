@@ -51,6 +51,8 @@ INSTALLED_APPS = [
     
     # Local apps
     'users',
+    'portfolio',
+    'nav_manager',
 
     # allauths apps
     'allauth',
