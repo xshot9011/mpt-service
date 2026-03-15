@@ -4,7 +4,7 @@ from django.utils import timezone
 from datetime import timedelta
 
 from nav_manager.models import Asset as NavAsset, DailyPrice
-from .models import Portfolio, AssetType, Symbol, Position, Transaction, LedgerEntry, ExchangeRate
+from .models import Portfolio, AssetType, Symbol, Position, Transaction, LedgerEntry
 
 
 # ---------------------------------------------------------------------------
@@ -243,114 +243,122 @@ class PortfolioValueAtTests(TestCase):
 
 
 # ---------------------------------------------------------------------------
-# ExchangeRate Tests
+# Average Cost Tests (no FX — currencies are modelled as positions)
 # ---------------------------------------------------------------------------
 
-class ExchangeRateTests(TestCase):
-    def test_same_currency_returns_one(self):
-        """get_rate for same from/to currency should return Decimal('1')."""
-        rate = ExchangeRate.get_rate('THB', 'THB')
-        self.assertEqual(rate, Decimal('1'))
-
-    def test_returns_exact_date_rate(self):
-        today = timezone.now().date()
-        ExchangeRate.objects.create(
-            from_currency='USD', to_currency='THB', date=today, rate=Decimal('35.50')
-        )
-        rate = ExchangeRate.get_rate('USD', 'THB', today)
-        self.assertEqual(rate, Decimal('35.50'))
-
-    def test_returns_latest_rate_before_date(self):
-        today = timezone.now().date()
-        yesterday = today - timedelta(days=1)
-        three_days_ago = today - timedelta(days=3)
-        ExchangeRate.objects.create(
-            from_currency='USD', to_currency='THB', date=three_days_ago, rate=Decimal('34.00')
-        )
-        ExchangeRate.objects.create(
-            from_currency='USD', to_currency='THB', date=yesterday, rate=Decimal('35.00')
-        )
-        # Should pick yesterday's rate (latest <= today)
-        rate = ExchangeRate.get_rate('USD', 'THB', today)
-        self.assertEqual(rate, Decimal('35.00'))
-
-    def test_returns_none_when_no_rate_exists(self):
-        rate = ExchangeRate.get_rate('USD', 'THB', timezone.now().date())
-        self.assertIsNone(rate)
-
-
-# ---------------------------------------------------------------------------
-# FX-Aware Average Cost Tests
-# ---------------------------------------------------------------------------
-
-class FXAverageCostTests(TestCase):
-    """Test that average cost is computed in portfolio base currency."""
+class AverageCostTests(TestCase):
+    """Test that average cost is computed from price alone (FX is implicit)."""
 
     def setUp(self):
         self.portfolio = Portfolio.objects.create(name="Thai Portfolio", currency='THB')
-        asset_type = AssetType.objects.create(portfolio=self.portfolio, name="US Equity")
+        asset_type = AssetType.objects.create(portfolio=self.portfolio, name="Cash")
         self.symbol = Symbol.objects.create(
             asset_type=asset_type,
-            name="SCHD",
-            currency='USD',
+            name="SCB Cash",
+            currency='THB',
             nav_source=Symbol.NavSource.FIXED,
-            nav_fixed=Decimal('25.00'),
+            nav_fixed=Decimal('1'),
         )
         self.position = Position.objects.create(
             portfolio=self.portfolio, symbol=self.symbol,
         )
 
-    def test_single_buy_with_exchange_rate(self):
-        """BUY 10 SCHD @ $10 USD, FX rate 35.50 → avg cost = 355.00 THB."""
+    def test_single_buy_average_cost(self):
+        """BUY 10 @ 5.00 → avg cost = 5.00."""
         Transaction.objects.create(
             position=self.position,
             transaction_type=Transaction.Type.BUY,
             quantity=Decimal('10'),
-            price=Decimal('10.00'),
-            exchange_rate=Decimal('35.50'),
+            price=Decimal('5.00'),
         )
         self.position.refresh_from_db()
         self.assertEqual(self.position.quantity, Decimal('10'))
-        # avg cost = 10 * 10 * 35.5 / 10 = 355.00
-        self.assertEqual(self.position.average_cost, Decimal('355.00000000'))
+        self.assertEqual(self.position.average_cost, Decimal('5.00000000'))
 
-    def test_multiple_buys_with_different_fx_rates(self):
-        """Two buys at different FX rates → weighted average in THB."""
+    def test_multiple_buys_weighted_average(self):
+        """Two buys at different prices → weighted average."""
         Transaction.objects.create(
             position=self.position,
             transaction_type=Transaction.Type.BUY,
             quantity=Decimal('10'),
-            price=Decimal('10.00'),
-            exchange_rate=Decimal('35.00'),  # cost = 3500 THB
+            price=Decimal('5.00'),  # cost = 50
         )
         Transaction.objects.create(
             position=self.position,
             transaction_type=Transaction.Type.BUY,
             quantity=Decimal('5'),
-            price=Decimal('12.00'),
-            exchange_rate=Decimal('36.00'),  # cost = 2160 THB
+            price=Decimal('7.00'),  # cost = 35
         )
         self.position.refresh_from_db()
         self.assertEqual(self.position.quantity, Decimal('15'))
-        # avg cost = (3500 + 2160) / 15 = 377.33333333
-        self.assertEqual(self.position.average_cost, Decimal('377.33333333'))
+        # avg cost = (50 + 35) / 15 = 5.66666666
+        self.assertEqual(self.position.average_cost, Decimal('5.66666666'))
 
-    def test_same_currency_exchange_rate_defaults_to_one(self):
-        """When exchange_rate is not specified, defaults to 1 (same currency)."""
-        thb_portfolio = Portfolio.objects.create(name="THB Only", currency='THB')
-        asset_type = AssetType.objects.create(portfolio=thb_portfolio, name="Cash")
-        thb_symbol = Symbol.objects.create(
-            asset_type=asset_type, name="SCB Cash", currency='THB',
-            nav_source=Symbol.NavSource.FIXED, nav_fixed=Decimal('1'),
-        )
-        position = Position.objects.create(portfolio=thb_portfolio, symbol=thb_symbol)
+
+# ---------------------------------------------------------------------------
+# Cost Calculation Breakdown Tests
+# ---------------------------------------------------------------------------
+
+class CostBreakdownTests(TestCase):
+    """Test the cost_calculation_breakdown() audit trail."""
+
+    def setUp(self):
+        self.portfolio = make_portfolio()
+        self.symbol = make_symbol(self.portfolio, nav_fixed=Decimal('10.00'))
+        self.position = make_position(self.portfolio, self.symbol)
+
+    def test_empty_position_returns_empty_list(self):
+        self.assertEqual(self.position.cost_calculation_breakdown(), [])
+
+    def test_single_buy_breakdown(self):
         Transaction.objects.create(
-            position=position,
+            position=self.position,
             transaction_type=Transaction.Type.BUY,
-            quantity=Decimal('100'),
+            quantity=Decimal('10'),
             price=Decimal('5.00'),
-            # exchange_rate defaults to 1.0
         )
-        position.refresh_from_db()
-        # avg cost = 100 * 5 * 1 / 100 = 5.00
-        self.assertEqual(position.average_cost, Decimal('5.00000000'))
+        steps = self.position.cost_calculation_breakdown()
+        self.assertEqual(len(steps), 1)
+        self.assertEqual(steps[0]['quantity'], Decimal('10'))
+        self.assertEqual(steps[0]['price'], Decimal('5.00'))
+        self.assertEqual(steps[0]['line_cost'], Decimal('50.00'))
+        self.assertEqual(steps[0]['running_avg'], Decimal('5.00000000'))
+
+    def test_multiple_buys_breakdown(self):
+        Transaction.objects.create(
+            position=self.position,
+            transaction_type=Transaction.Type.BUY,
+            quantity=Decimal('10'),
+            price=Decimal('5.00'),
+        )
+        Transaction.objects.create(
+            position=self.position,
+            transaction_type=Transaction.Type.BUY,
+            quantity=Decimal('5'),
+            price=Decimal('8.00'),
+        )
+        steps = self.position.cost_calculation_breakdown()
+        self.assertEqual(len(steps), 2)
+        # After first buy: avg = 50 / 10 = 5.00
+        self.assertEqual(steps[0]['running_avg'], Decimal('5.00000000'))
+        # After second buy: avg = (50 + 40) / 15 = 6.00
+        self.assertEqual(steps[1]['running_avg'], Decimal('6.00000000'))
+        self.assertEqual(steps[1]['running_qty'], Decimal('15'))
+        self.assertEqual(steps[1]['running_cost'], Decimal('90.00'))
+
+    def test_sells_excluded_from_breakdown(self):
+        """SELL transactions should not appear in the breakdown."""
+        Transaction.objects.create(
+            position=self.position,
+            transaction_type=Transaction.Type.BUY,
+            quantity=Decimal('20'),
+            price=Decimal('3.00'),
+        )
+        Transaction.objects.create(
+            position=self.position,
+            transaction_type=Transaction.Type.SELL,
+            quantity=Decimal('5'),
+            price=Decimal('4.00'),
+        )
+        steps = self.position.cost_calculation_breakdown()
+        self.assertEqual(len(steps), 1)  # only the BUY

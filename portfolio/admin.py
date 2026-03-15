@@ -1,6 +1,6 @@
 from django.contrib import admin
 # Imforms Django admin to use these models in the admin interface
-from .models import Portfolio, AssetType, Symbol, Position, Transaction, LedgerEntry, ExchangeRate
+from .models import Portfolio, AssetType, Symbol, Position, Transaction, LedgerEntry
 
 
 # Allows editing Symbol objects directly within the AssetType edit page in the admin interface.
@@ -54,9 +54,3 @@ admin.site.register(Position)
 admin.site.register(Transaction)
 admin.site.register(LedgerEntry)
 
-
-@admin.register(ExchangeRate)
-class ExchangeRateAdmin(admin.ModelAdmin):
-    list_display = ('from_currency', 'to_currency', 'date', 'rate')
-    list_filter = ('from_currency', 'to_currency')
-    ordering = ('-date',)
