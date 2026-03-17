@@ -11,7 +11,7 @@ class Portfolio(models.Model):
     currency = models.CharField(
         max_length=3,
         default='THB',
-        help_text="Base currency for the portfolio (ISO 4217, e.g. THB, USD).",
+        help_text="Base currency for the portfolio (ISO 4217, e.g., THB, USD). This currency will be used to calculate the moving average cost."
     )
 
     def __str__(self):
@@ -26,10 +26,7 @@ class Portfolio(models.Model):
 
             qty = Decimal('0')
             for tx in transactions_up_to_date:
-                if tx.transaction_type == Transaction.Type.BUY:
-                    qty += tx.quantity
-                else:
-                    qty -= tx.quantity
+                qty += tx.quantity
 
             if qty > 0:
                 nav = position.symbol.get_nav(target_date)
@@ -224,23 +221,21 @@ class Transaction(models.Model):
     def save(self, *args, **kwargs):
         """Override save to update position and create ledger entries."""
         super().save(*args, **kwargs)
-        # Update position quantity
-        if self.transaction_type == self.Type.BUY:
-            self.position.quantity += self.quantity
-        else:
-            self.position.quantity -= self.quantity
+        # Update position quantity (quantity can be positive or negative)
+        self.position.quantity += self.quantity
         self.position.save(update_fields=['quantity'])
-        # Recalculate average cost after a BUY
-        if self.transaction_type == self.Type.BUY:
+        # Recalculate average cost after a BUY (positive quantity)
+        if self.quantity > 0:
             self.position.recalculate_average_cost()
         # Create double-entry ledger entries
         LedgerEntry.create_from_transaction(self)
 
     def realized_pnl(self) -> Decimal:
-        """Realized P&L for this transaction (only meaningful for SELL)."""
-        if self.transaction_type == self.Type.SELL:
-            cost_basis = self.position.average_cost * self.quantity
-            proceeds = self.price * self.quantity
+        """Realized P&L for this transaction (only meaningful for SELL / negative qty)."""
+        if self.quantity < 0:
+            abs_qty = abs(self.quantity)
+            cost_basis = self.position.average_cost * abs_qty
+            proceeds = self.price * abs_qty
             return (proceeds - cost_basis).quantize(Decimal('0.00000001'))
         return Decimal('0')
 
