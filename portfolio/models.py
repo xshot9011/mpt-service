@@ -5,7 +5,10 @@ from django.core.validators import MinValueValidator
 from nav_manager.models import Asset as NavAsset, DailyPrice
 
 
-class Portfolio(models.Model):
+from core.models import TimeStampedModel
+
+
+class Portfolio(TimeStampedModel):
     """A collection of symbols organised by asset types."""
     name = models.CharField(max_length=100)
     description = models.TextField(blank=True)
@@ -37,7 +40,7 @@ class Portfolio(models.Model):
         return total_value.quantize(Decimal('0.00000001'))
 
 
-class AssetType(models.Model):
+class AssetType(TimeStampedModel):
     """A category of assets within a portfolio (e.g. 'Cash', 'Thai Equity', 'Crypto')."""
     portfolio = models.ForeignKey(Portfolio, on_delete=models.CASCADE, related_name='asset_types')
     name = models.CharField(max_length=100)
@@ -49,7 +52,7 @@ class AssetType(models.Model):
         return f"{self.portfolio.name} / {self.name}"
 
 
-class Symbol(models.Model):
+class Symbol(TimeStampedModel):
     """A holding within a portfolio, combining NAV configuration and position data.
 
     Each symbol represents a user-named asset with its pricing source and
@@ -213,7 +216,7 @@ class Symbol(models.Model):
         return (market_price - self.average_cost) * self.quantity
 
 
-class Transaction(models.Model):
+class Transaction(TimeStampedModel):
     """A trade that changes a symbol's holdings and creates ledger entries."""
     class Type(models.TextChoices):
         BUY = 'BUY', 'Buy'
@@ -251,7 +254,7 @@ class Transaction(models.Model):
         return Decimal('0')
 
 
-class LedgerEntry(models.Model):
+class LedgerEntry(TimeStampedModel):
     """Double-entry record for each transaction.
 
     For every transaction two entries are created: a debit and a credit.
