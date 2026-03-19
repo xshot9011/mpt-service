@@ -1,11 +1,12 @@
 from django.db import models
 from decimal import Decimal
 from django.utils import timezone
+from django.core.validators import MinValueValidator
 from nav_manager.models import Asset as NavAsset, DailyPrice
 
 
 class Portfolio(models.Model):
-    """A collection of positions organised by asset types and symbols."""
+    """A collection of symbols organised by asset types."""
     name = models.CharField(max_length=100)
     description = models.TextField(blank=True)
     currency = models.CharField(
@@ -21,15 +22,15 @@ class Portfolio(models.Model):
         """Calculate the total point-in-time value of the portfolio at target_date."""
         total_value = Decimal('0')
 
-        for position in self.positions.all():
-            transactions_up_to_date = position.transactions.filter(timestamp__date__lte=target_date)
+        for symbol in self.symbols.all():
+            transactions_up_to_date = symbol.transactions.filter(timestamp__date__lte=target_date)
 
             qty = Decimal('0')
             for tx in transactions_up_to_date:
                 qty += tx.quantity
 
             if qty > 0:
-                nav = position.symbol.get_nav(target_date)
+                nav = symbol.get_nav(target_date)
                 if nav is not None:
                     total_value += qty * nav
 
@@ -49,12 +50,13 @@ class AssetType(models.Model):
 
 
 class Symbol(models.Model):
-    """A named holding inside an asset type (e.g. 'SCB Cash', 'KTB Cash').
+    """A holding within a portfolio, combining NAV configuration and position data.
 
-    NAV can be provided via three sources:
+    Each symbol represents a user-named asset with its pricing source and
+    quantity/cost tracking.  NAV can be provided via three sources:
       FIXED       — a static decimal stored on this record.
-      SCRIPT      — a URL / formula string (e.g. IMPORTXML) for the user to
-                    reference; Django does not fetch it automatically.
+      SCRIPT      — a URL / formula string (e.g. IMPORTXML) for the frontend
+                    to fetch via the proxy-scrape endpoint.
       NAV_MANAGER — linked to a nav_manager.Asset; NAV is resolved from its
                     DailyPrice records.
     """
@@ -63,13 +65,16 @@ class Symbol(models.Model):
         SCRIPT = 'SCRIPT', 'User Script (IMPORTXML)'
         NAV_MANAGER = 'NAV_MANAGER', 'NAV Manager'
 
-    asset_type = models.ForeignKey(AssetType, on_delete=models.CASCADE, related_name='symbols')
+    portfolio = models.ForeignKey(Portfolio, on_delete=models.CASCADE, related_name='symbols')
+    asset_type = models.ForeignKey(AssetType, on_delete=models.PROTECT, related_name='symbols')
     name = models.CharField(max_length=100)
     currency = models.CharField(
         max_length=3,
         default='THB',
         help_text="Currency this symbol is denominated in (ISO 4217, e.g. USD, THB).",
     )
+
+    # --- NAV configuration ---
 
     nav_source = models.CharField(
         max_length=20,
@@ -86,7 +91,11 @@ class Symbol(models.Model):
     # Used when nav_source == SCRIPT
     script_url = models.TextField(
         blank=True,
-        help_text="IMPORTXML formula, URL, or any script reference for NAV lookup.",
+        help_text="URL to scrape the NAV from (used like IMPORTXML).",
+    )
+    script_xpath = models.TextField(
+        blank=True,
+        help_text="XPath query to extract the NAV from the URL (used like IMPORTXML).",
     )
 
     # Used when nav_source == NAV_MANAGER
@@ -98,8 +107,29 @@ class Symbol(models.Model):
         help_text="Link to a nav_manager Asset whose DailyPrice records supply the NAV.",
     )
 
+    # --- Position data ---
+
+    quantity = models.DecimalField(
+        max_digits=30, decimal_places=8, default=Decimal('0'),
+        validators=[MinValueValidator(Decimal('0'))]
+    )
+    average_cost = models.DecimalField(
+        max_digits=30, decimal_places=8, default=Decimal('0'),
+        validators=[MinValueValidator(Decimal('0'))]
+    )
+
     class Meta:
-        unique_together = ('asset_type', 'name')
+        unique_together = ('portfolio', 'asset_type', 'name')
+        constraints = [
+            models.CheckConstraint(
+                check=models.Q(quantity__gte=0),
+                name='symbol_quantity_non_negative'
+            ),
+            models.CheckConstraint(
+                check=models.Q(average_cost__gte=0),
+                name='symbol_average_cost_non_negative'
+            ),
+        ]
 
     def __str__(self):
         return f"{self.asset_type} / {self.name}"
@@ -131,31 +161,12 @@ class Symbol(models.Model):
 
         return None
 
-
-
-
-class Position(models.Model):
-    """Current holding of a symbol within a portfolio.
-
-    Quantity and average cost are stored with high precision.
-    """
-    portfolio = models.ForeignKey(Portfolio, on_delete=models.CASCADE, related_name='positions')
-    symbol = models.ForeignKey(Symbol, on_delete=models.CASCADE, related_name='positions')
-    quantity = models.DecimalField(max_digits=30, decimal_places=8, default=Decimal('0'))
-    average_cost = models.DecimalField(max_digits=30, decimal_places=8, default=Decimal('0'))
-
-    class Meta:
-        unique_together = ('portfolio', 'symbol')
-
-    def __str__(self):
-        return f"{self.symbol.name} in {self.portfolio.name}: {self.quantity}"
-
     def recalculate_average_cost(self):
         """Re-calculate the moving-average cost based on all related BUY transactions.
 
         Only BUY transactions affect the average cost; SELLs reduce quantity.
         FX conversion is handled implicitly by modelling foreign currencies
-        as their own positions (e.g. a USD symbol with avg cost in THB).
+        as their own symbols (e.g. a USD symbol with avg cost in THB).
         """
         buys = self.transactions.filter(transaction_type=Transaction.Type.BUY)
         total_qty = Decimal('0')
@@ -203,12 +214,12 @@ class Position(models.Model):
 
 
 class Transaction(models.Model):
-    """A trade that changes a position and creates ledger entries."""
+    """A trade that changes a symbol's holdings and creates ledger entries."""
     class Type(models.TextChoices):
         BUY = 'BUY', 'Buy'
         SELL = 'SELL', 'Sell'
 
-    position = models.ForeignKey(Position, on_delete=models.CASCADE, related_name='transactions')
+    symbol = models.ForeignKey(Symbol, on_delete=models.CASCADE, related_name='transactions')
     transaction_type = models.CharField(max_length=4, choices=Type.choices)
     quantity = models.DecimalField(max_digits=30, decimal_places=8)
     price = models.DecimalField(max_digits=30, decimal_places=8)  # price per unit
@@ -216,17 +227,17 @@ class Transaction(models.Model):
     timestamp = models.DateTimeField(default=timezone.now)
 
     def __str__(self):
-        return f"{self.transaction_type} {self.quantity} {self.position.symbol.name} @ {self.price}"
+        return f"{self.transaction_type} {self.quantity} {self.symbol.name} @ {self.price}"
 
     def save(self, *args, **kwargs):
-        """Override save to update position and create ledger entries."""
+        """Override save to update symbol holdings and create ledger entries."""
         super().save(*args, **kwargs)
-        # Update position quantity (quantity can be positive or negative)
-        self.position.quantity += self.quantity
-        self.position.save(update_fields=['quantity'])
+        # Update symbol quantity (quantity can be positive or negative)
+        self.symbol.quantity += self.quantity
+        self.symbol.save(update_fields=['quantity'])
         # Recalculate average cost after a BUY (positive quantity)
         if self.quantity > 0:
-            self.position.recalculate_average_cost()
+            self.symbol.recalculate_average_cost()
         # Create double-entry ledger entries
         LedgerEntry.create_from_transaction(self)
 
@@ -234,7 +245,7 @@ class Transaction(models.Model):
         """Realized P&L for this transaction (only meaningful for SELL / negative qty)."""
         if self.quantity < 0:
             abs_qty = abs(self.quantity)
-            cost_basis = self.position.average_cost * abs_qty
+            cost_basis = self.symbol.average_cost * abs_qty
             proceeds = self.price * abs_qty
             return (proceeds - cost_basis).quantize(Decimal('0.00000001'))
         return Decimal('0')
@@ -260,7 +271,7 @@ class LedgerEntry(models.Model):
     def create_from_transaction(cls, transaction):
         """Create paired debit/credit entries for a transaction."""
         amount = (transaction.quantity * transaction.price).quantize(Decimal('0.00000001'))
-        symbol_name = transaction.position.symbol.name
+        symbol_name = transaction.symbol.name
         if transaction.transaction_type == Transaction.Type.BUY:
             cls.objects.create(
                 transaction=transaction,

@@ -36,14 +36,14 @@
 ## Incremental Feature Roadmap
 
 ### Milestone 1: Core Ledger Foundation
-- **Data Models**: Setup `Asset`, `Broker`, `Position`, `Transaction`, `LedgerEntry`.
-- **Core Logic**: Implement moving-average cost calculation for Positions.
+- **Data Models**: Setup `Portfolio`, `AssetType`, `Symbol`, `Transaction`, `LedgerEntry`.
+- **Core Logic**: Implement moving-average cost calculation for Symbols.
 - **Double-Entry**: Automate balancing transaction records (Debit/Credit).
 - **Admin Setup**: Provide basic Django admin interfaces for testing.
 
 ### Milestone 2: Point-in-Time Valuation (Manual)
-- **App Restructuring**: Extract `Asset` and `DailyPrice` into a dedicated `symbol` app.
-- **Portfolio Linking**: Introduce a `Portfolio` model to group `Position` and `Transaction` records.
+- **App Restructuring**: Extract `Asset` and `DailyPrice` into a dedicated `nav_manager` app.
+- **Portfolio Linking**: Introduce a `Portfolio` model to group `Symbol` and `Transaction` records.
 - **Valuation Logic**: Implement `value_at(target_date)` to calculate historical portfolio value using past transactions and the latest available manual `DailyPrice`.
 - **Testing**: Comprehensive unit tests for point-in-time calculation.
 
