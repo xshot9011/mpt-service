@@ -22,4 +22,5 @@ urlpatterns = [
     path('', views.landing_page, name='landing_page'),
     path('admin/', admin.site.urls),
     path('accounts/', include('allauth.urls')), # /accounts/google/login
+    path('api/portfolio/', include('portfolio.urls')),
 ]
