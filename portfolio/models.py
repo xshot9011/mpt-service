@@ -125,11 +125,11 @@ class Symbol(TimeStampedModel):
         unique_together = ('portfolio', 'asset_type', 'name')
         constraints = [
             models.CheckConstraint(
-                check=models.Q(quantity__gte=0),
+                condition=models.Q(quantity__gte=0),
                 name='symbol_quantity_non_negative'
             ),
             models.CheckConstraint(
-                check=models.Q(average_cost__gte=0),
+                condition=models.Q(average_cost__gte=0),
                 name='symbol_average_cost_non_negative'
             ),
         ]

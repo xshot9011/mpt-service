@@ -86,3 +86,14 @@ Assuming your app service is named `web` (default in the `docker-compose.dev.yml
 ```bash
 docker-compose -f docker-compose.dev.yml exec web python3 manage.py test
 ```
+
+---
+
+## Security Scanning
+
+To scan the project for vulnerabilities and exposed secrets (excluding the `.env` file), run:
+
+```bash
+trivy fs . --scanners vuln,secret,misconfig,license --skip-files "**/.env*"
+```
+
